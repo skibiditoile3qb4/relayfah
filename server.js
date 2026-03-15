@@ -421,6 +421,19 @@ async function handleJoin(clientId, data) {
   
   client.room = room;
 client.username = username || `Player${clientId.substring(0, 6)}`;
+  if (db) {
+  const uname = (client.username || '').trim().toLowerCase();
+  const hit = await db.collection('persistent_bans').findOne({ username: uname });
+  if (hit) {
+    client.ws.send(JSON.stringify({
+      type: 'persistent_ban_hit',
+      bannedBy: hit.bannedBy || 'Owner',
+      reason: hit.reason || 'Persistent database ban'
+    }));
+    setTimeout(() => client.ws.close(), 500);
+    return;
+  }
+}
 client.status = status || 'player';
 client.permanentId = data.permanentId || null;
 client.lastHeartbeat = Date.now();
@@ -1284,16 +1297,25 @@ function handleAdminAction(clientId, data) {
     return;
   }
   
-  // Special handling for lookup - doesn't need online target
- if (action === 'lookup' || action === 'load_reports' || action === 'update_report_status') {
-    if (action === 'lookup') {
-        handleLookupAction(client, null, data);
-    } else if (action === 'load_reports') {
-        handleLoadReports(client, data);
-    } else if (action === 'update_report_status') {
-        handleUpdateReportStatus(client, data);
-    }
-    return;
+  if (
+  action === 'lookup' ||
+  action === 'load_reports' ||
+  action === 'update_report_status' ||
+  action === 'add_persistent_ban' ||
+  action === 'check_persistent_ban'
+) {
+  if (action === 'lookup') {
+    handleLookupAction(client, null, data);
+  } else if (action === 'load_reports') {
+    handleLoadReports(client, data);
+  } else if (action === 'update_report_status') {
+    handleUpdateReportStatus(client, data);
+  } else if (action === 'add_persistent_ban') {
+    handleAddPersistentBan(client, data);
+  } else if (action === 'check_persistent_ban') {
+    handleCheckPersistentBan(client, data);
+  }
+  return;
 }
   
   // For all other actions, find online target
@@ -1653,6 +1675,68 @@ function handlePromoteAction(adminClient, targetClient, data) {
       message: `${targetClient.username} rank changed to ${newRank}`
     }));
   }
+}
+async function handleAddPersistentBan(adminClient, data) {
+  if (!db) return;
+
+  const { adminRank, adminUsername, targetUsername } = data;
+  const username = (targetUsername || '').trim().toLowerCase();
+
+  if (adminRank !== 'owner') {
+    adminClient.ws.send(JSON.stringify({
+      type: 'persistent_ban_result',
+      success: false,
+      message: 'Only owner can edit persistent ban list'
+    }));
+    return;
+  }
+
+  if (!username) {
+    adminClient.ws.send(JSON.stringify({
+      type: 'persistent_ban_result',
+      success: false,
+      message: 'Username required'
+    }));
+    return;
+  }
+
+  await db.collection('persistent_bans').updateOne(
+    { username },
+    {
+      $set: {
+        username,
+        bannedBy: adminUsername || 'owner',
+        reason: 'Persistent database ban',
+        updatedAt: Date.now()
+      }
+    },
+    { upsert: true }
+  );
+
+  adminClient.ws.send(JSON.stringify({
+    type: 'persistent_ban_result',
+    success: true,
+    message: `${username} added to persistent ban list`
+  }));
+}
+async function handleCheckPersistentBan(client, data) {
+  if (!db) return;
+
+  const username = ((data.targetUsername || client.username || '') + '').trim().toLowerCase();
+  if (!username) return;
+
+  const hit = await db.collection('persistent_bans').findOne({ username });
+  if (!hit) return;
+
+  client.ws.send(JSON.stringify({
+    type: 'persistent_ban_hit',
+    bannedBy: hit.bannedBy || 'Owner',
+    reason: hit.reason || 'Persistent database ban'
+  }));
+
+  setTimeout(() => {
+    if (client.ws.readyState === WebSocket.OPEN) client.ws.close();
+  }, 500);
 }
 async function handleLoadReports(adminClient, data) {
   if (!db) return;
