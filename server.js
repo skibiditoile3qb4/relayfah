@@ -2241,7 +2241,7 @@ setInterval(() => {
 
 setInterval(async () => {
   if (!db) return;
-  const cutoff = Date.now() - (3 * 24 * 60 * 60 * 1000);
+  const cutoff = Date.now() - (1 * 24 * 60 * 60 * 1000);
 
   try {
     await db.collection('reports').deleteMany({
