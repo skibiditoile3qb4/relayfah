@@ -334,6 +334,10 @@ function handleMessage(clientId, data) {
     handleAdminAction(clientId, data);
     break;
       
+  case 'submit_report':
+  handleSubmitReport(clientId, data);
+  break;
+      
  case 'survival_action':
     handleSurvivalAction(clientId, data);
     break;
@@ -1217,6 +1221,48 @@ function handleOwnerPasswordCheck(clientId, data) {
     ip: client.ip 
   });
 }
+
+async function handleSubmitReport(clientId, data) {
+  const client = clients.get(clientId);
+  if (!client || !db) return;
+
+  const reportedUsername = (data.reportedUsername || '').trim();
+  const reason = (data.reason || '').trim();
+
+  if (!reportedUsername || !reason) {
+    client.ws.send(JSON.stringify({
+      type: 'report_submit_result',
+      success: false,
+      message: 'Username and reason are required'
+    }));
+    return;
+  }
+
+  try {
+    await db.collection('reports').insertOne({
+      reportedUsername,
+      reason: reason.substring(0, 500),
+      reporterUsername: data.reporterUsername || client.username || 'unknown',
+      reporterPermanentId: data.reporterPermanentId || client.permanentId || null,
+      reporterStatus: data.reporterStatus || client.status || 'player',
+      room: data.room || client.room || 'unknown',
+      closed: false,
+      closedAt: null,
+      closedBy: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    });
+
+    client.ws.send(JSON.stringify({ type: 'report_submit_result', success: true }));
+  } catch (e) {
+    console.error('Error submitting report:', e);
+    client.ws.send(JSON.stringify({
+      type: 'report_submit_result',
+      success: false,
+      message: 'Failed to submit report'
+    }));
+  }
+}
 // ============================================
 // ADMIN FUNCTIONS
 // ============================================
@@ -1266,6 +1312,12 @@ function handleAdminAction(clientId, data) {
     case 'promote':
         handlePromoteAction(client, targetClient, data);
         break;
+    case 'load_reports':
+    handleLoadReports(client, data);
+    break;
+  case 'update_report_status':
+    handleUpdateReportStatus(client, data);
+    break;
     case 'ban':
         handleBanAction(client, targetClient, data);
         break;
@@ -1593,6 +1645,59 @@ function handlePromoteAction(adminClient, targetClient, data) {
       type: 'admin_action_result',
       success: true,
       message: `${targetClient.username} rank changed to ${newRank}`
+    }));
+  }
+}
+async function handleLoadReports(adminClient, data) {
+  if (!db) return;
+
+  try {
+    const reports = await db.collection('reports')
+      .find({})
+      .sort({ closed: 1, createdAt: -1 })
+      .limit(200)
+      .toArray();
+
+    adminClient.ws.send(JSON.stringify({
+      type: 'reports_data',
+      reports
+    }));
+  } catch (e) {
+    adminClient.ws.send(JSON.stringify({
+      type: 'reports_data',
+      reports: []
+    }));
+  }
+}
+
+async function handleUpdateReportStatus(adminClient, data) {
+  if (!db) return;
+
+  const { reportId, closed, adminUsername } = data;
+  if (!reportId) return;
+
+  try {
+    const update = {
+      closed: !!closed,
+      updatedAt: Date.now(),
+      closedAt: closed ? Date.now() : null,
+      closedBy: closed ? (adminUsername || 'staff') : null
+    };
+
+    await db.collection('reports').updateOne(
+      { _id: new (require('mongodb').ObjectId)(reportId) },
+      { $set: update }
+    );
+
+    adminClient.ws.send(JSON.stringify({
+      type: 'report_update_result',
+      success: true
+    }));
+  } catch (e) {
+    adminClient.ws.send(JSON.stringify({
+      type: 'report_update_result',
+      success: false,
+      message: 'Failed to update report'
     }));
   }
 }
@@ -2128,6 +2233,19 @@ setInterval(() => {
   }
 }, 15000);
 
+setInterval(async () => {
+  if (!db) return;
+  const cutoff = Date.now() - (3 * 24 * 60 * 60 * 1000);
+
+  try {
+    await db.collection('reports').deleteMany({
+      closed: true,
+      closedAt: { $lte: cutoff }
+    });
+  } catch (e) {
+    console.error('Report cleanup failed:', e);
+  }
+}, 60 * 60 * 1000);
 // Status endpoint - shows server stats
 server.on('request', (req, res) => {
   const pathname = url.parse(req.url).pathname;
