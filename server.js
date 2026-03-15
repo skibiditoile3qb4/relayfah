@@ -1285,10 +1285,16 @@ function handleAdminAction(clientId, data) {
   }
   
   // Special handling for lookup - doesn't need online target
-  if (action === 'lookup') {
-    handleLookupAction(client, null, data);
+ if (action === 'lookup' || action === 'load_reports' || action === 'update_report_status') {
+    if (action === 'lookup') {
+        handleLookupAction(client, null, data);
+    } else if (action === 'load_reports') {
+        handleLoadReports(client, data);
+    } else if (action === 'update_report_status') {
+        handleUpdateReportStatus(client, data);
+    }
     return;
-  }
+}
   
   // For all other actions, find online target
   let targetClient = null;
