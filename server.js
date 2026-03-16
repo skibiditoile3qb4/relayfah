@@ -344,6 +344,17 @@ function handleMessage(clientId, data) {
   case 'airstrike':
       handleAirstrike(clientId, data);
       break;
+  case 'friend_request':
+  handleFriendRequest(clientId, data);
+  break;
+
+case 'friend_request_response':
+  handleFriendRequestResponse(clientId, data);
+  break;
+
+case 'dm_message':
+  handleDMMessage(clientId, data);
+  break;
       
     default:
       client.ws.send(JSON.stringify({
@@ -2260,6 +2271,153 @@ async function handleResetAction(adminClient, targetClient, data) {
       message: `${targetClient.username} has been reset (coins: 10, gems: 0)`
     }));
   }
+}
+function findOnlineClientByUsername(username) {
+  if (!username) return null;
+  for (const [, c] of clients.entries()) {
+    if (c.username === username && c.ws.readyState === WebSocket.OPEN) {
+      return c;
+    }
+  }
+  return null;
+}
+function handleFriendRequest(clientId, data) {
+  const sender = clients.get(clientId);
+  if (!sender) return;
+
+  const toUsername = (data.toUsername || '').trim();
+  if (!toUsername) {
+    sender.ws.send(JSON.stringify({
+      type: 'friend_request_result',
+      success: false,
+      message: 'Username is required'
+    }));
+    return;
+  }
+
+  if (toUsername === sender.username) {
+    sender.ws.send(JSON.stringify({
+      type: 'friend_request_result',
+      success: false,
+      message: 'You cannot send a friend request to yourself'
+    }));
+    return;
+  }
+
+  const target = findOnlineClientByUsername(toUsername);
+  if (!target) {
+    sender.ws.send(JSON.stringify({
+      type: 'friend_request_result',
+      success: false,
+      message: 'Player must be online to receive friend requests'
+    }));
+    return;
+  }
+
+  target.ws.send(JSON.stringify({
+    type: 'friend_request',
+    fromUsername: sender.username
+  }));
+
+  sender.ws.send(JSON.stringify({
+    type: 'friend_request_result',
+    success: true,
+    message: `Friend request sent to ${toUsername}`
+  }));
+}
+function handleFriendRequest(clientId, data) {
+  const sender = clients.get(clientId);
+  if (!sender) return;
+
+  const toUsername = (data.toUsername || '').trim();
+  if (!toUsername) {
+    sender.ws.send(JSON.stringify({
+      type: 'friend_request_result',
+      success: false,
+      message: 'Username is required'
+    }));
+    return;
+  }
+
+  if (toUsername === sender.username) {
+    sender.ws.send(JSON.stringify({
+      type: 'friend_request_result',
+      success: false,
+      message: 'You cannot send a friend request to yourself'
+    }));
+    return;
+  }
+
+  const target = findOnlineClientByUsername(toUsername);
+  if (!target) {
+    sender.ws.send(JSON.stringify({
+      type: 'friend_request_result',
+      success: false,
+      message: 'Player must be online to receive friend requests'
+    }));
+    return;
+  }
+
+  target.ws.send(JSON.stringify({
+    type: 'friend_request',
+    fromUsername: sender.username
+  }));
+
+  sender.ws.send(JSON.stringify({
+    type: 'friend_request_result',
+    success: true,
+    message: `Friend request sent to ${toUsername}`
+  }));
+}
+function handleFriendRequestResponse(clientId, data) {
+  const responder = clients.get(clientId);
+  if (!responder) return;
+
+  const fromUsername = (data.fromUsername || '').trim();
+  const accepted = !!data.accepted;
+
+  if (!fromUsername) return;
+
+  const originalSender = findOnlineClientByUsername(fromUsername);
+  if (!originalSender) return; // sender went offline; nothing to deliver
+
+  originalSender.ws.send(JSON.stringify({
+    type: 'friend_request_response',
+    username: responder.username,
+    accepted
+  }));
+
+  // Optional: tell responder too for UI confirmation
+  responder.ws.send(JSON.stringify({
+    type: 'friend_request_response',
+    username: fromUsername,
+    accepted
+  }));
+}
+function handleDMMessage(clientId, data) {
+  const sender = clients.get(clientId);
+  if (!sender) return;
+
+  const toUsername = (data.toUsername || '').trim();
+  const message = (data.message || '').trim();
+
+  if (!toUsername || !message) return;
+
+  const target = findOnlineClientByUsername(toUsername);
+  if (!target) {
+    sender.ws.send(JSON.stringify({
+      type: 'error',
+      message: 'Both players must be online to DM'
+    }));
+    return;
+  }
+
+  target.ws.send(JSON.stringify({
+    type: 'dm_message',
+    fromUsername: sender.username,
+    message: message.substring(0, 500),
+    timestamp: Date.now()
+  }));
 }
 function handleAirstrike(clientId, data) {
   const client = clients.get(clientId);
