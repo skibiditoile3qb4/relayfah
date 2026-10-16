@@ -1,11 +1,9 @@
 const WebSocket = require('ws');
 const http = require('http');
-const https = require('https');
 const url = require('url');
 const { MongoClient } = require('mongodb');
 
 const MONGO_URI = process.env.MONGO_URI;
-const PROXYCHECK_API_KEY = process.env.PROXYCHECK_API_KEY; 
 
 let db = null;
 
@@ -45,66 +43,6 @@ async function saveMessage(room, message) {
   } catch(e) {
     console.error('Error saving message:', e);
   }
-}
-async function checkProxy(ip) {
-  console.log('🔍 Checking IP:', ip);
-  
-  return new Promise((resolve) => {
-    const apiUrl = PROXYCHECK_API_KEY 
-      ? `https://proxycheck.io/v2/${ip}?key=${PROXYCHECK_API_KEY}&vpn=1`
-      : `https://proxycheck.io/v2/${ip}?vpn=1`;
-    
-    console.log('📡 API URL:', apiUrl);
-    
-    const timeout = setTimeout(() => {
-      console.log('⏱️ API TIMEOUT');
-      resolve({ vpn: false, proxy: false, tor: false });
-    }, 5000);
-    
-    https.get(apiUrl, (res) => {
-      let data = '';
-      
-      res.on('data', (chunk) => data += chunk);
-      res.on('end', () => {
-        clearTimeout(timeout);
-        try {
-          const result = JSON.parse(data);
-          console.log('✅ API Response:', JSON.stringify(result, null, 2));
-          
-          const ipData = result[ip];
-          
-          if (!ipData) {
-            console.log('⚠️ No IP data found');
-            resolve({ vpn: false, proxy: false, tor: false });
-            return;
-          }
-          
-          // ✅ FIX: Check for string "yes" instead of detections object
-          const isProxy = ipData.proxy === 'yes';
-          const isVPN = ipData.type === 'VPN';
-          const isTor = ipData.type === 'TOR';
-          const op = ipData.operator || {};
-          
-          const vpnResult = {
-            vpn: isVPN,
-            proxy: isProxy,
-            tor: isTor,
-            operator: op.name || null
-          };
-          
-          console.log('🎯 VPN Detection Result:', vpnResult);
-          resolve(vpnResult);
-        } catch(e) {
-          console.log('❌ Parse Error:', e.message);
-          resolve({ vpn: false, proxy: false, tor: false });
-        }
-      });
-    }).on('error', (err) => {
-      clearTimeout(timeout);
-      console.log('❌ Request Error:', err.message);
-      resolve({ vpn: false, proxy: false, tor: false });
-    });
-  });
 }
 
 async function loadChatHistory(room) {
@@ -209,7 +147,6 @@ wss.on('connection', async (ws, req) => {
     .trim()
     .replace('::ffff:', '');
   
-  const vpnCheck = await checkProxy(ip);
   
   clients.set(clientId, {
     ws,
@@ -218,8 +155,6 @@ wss.on('connection', async (ws, req) => {
     room: null,
     status: 'player',
     ip,
-    vpnDetected: vpnCheck.vpn || vpnCheck.proxy || vpnCheck.tor,
-    vpnOperator: vpnCheck.operator,
     connectedAt: Date.now(),
     lastHeartbeat: Date.now()
   });
@@ -384,24 +319,6 @@ async function handleJoin(clientId, data) {
     return;
   }
   
-  if (client.vpnDetected) {
-    client.ws.send(JSON.stringify({
-      type: 'error',
-      message: 'Connection error. Please try again later.'
-    }));
-    setTimeout(() => {
-      if (client.ws.readyState === WebSocket.OPEN) {
-        client.ws.close();
-      }
-    }, 2000);
-    log('SILENT_VPN_BAN', { 
-      ip: client.ip, 
-      username,
-      operator: client.vpnOperator 
-    });
-    return;  // ← This kicks them out!
-  }
-
   
   console.log('🎯 JOIN REQUEST:', { clientId, room, username, status });
   
